@@ -1,6 +1,7 @@
 # Requirements for jaid-agentic-newsletter
+Flask
+PyPDF2
 openai
 pandas
+pydantic
 python-dotenv
-PyPDF2
-Flask
