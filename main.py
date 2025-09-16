@@ -1,5 +1,6 @@
 from flask import Flask
 
+old_data = """
 def main():
 	pdf_path = None
 	while not pdf_path:
@@ -11,3 +12,11 @@ def main():
 	print("Storing analysis as DataFrame...")
 	df = pd.DataFrame([analysis])
 	print(df)
+
+"""
+
+app = Flask(__name__)
+
+@app.route('/')
+def main():
+    return "<p>Hello, world.</p>"
