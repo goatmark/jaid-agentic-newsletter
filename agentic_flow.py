@@ -191,7 +191,7 @@ def agent_build_newsletter(df_sorted, tavily_api_key):
 			break
 	all_articles = []
 	for stock in selected_stocks:
-		articles = agent_search_news_tavily(stock.Symbol, tavily_api_key, max_results=10)
+		articles = agent_search_news_tavily(stock.Symbol, tavily_api_key, max_results=4)
 		filtered = agent_filter_articles(articles)
 		# Weight by portfolio
 		for a in filtered:
