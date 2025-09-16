@@ -661,7 +661,7 @@ def agent_send_newsletter_email(subject: str, markdown_content: str, html_conten
                 logger.error("SENDGRID_API_KEY not configured; skipping email send.")
                 return False
 
-        from_email = os.getenv("NEWSLETTER_FROM_EMAIL", "news@jaidnewsletter.com")
+        from_email = os.getenv("SEND_FROM_EMAIL", "mark@markkhoury.me")
         payload = {
                 "personalizations": [{"to": [{"email": recipient}]}],
                 "from": {"email": from_email},

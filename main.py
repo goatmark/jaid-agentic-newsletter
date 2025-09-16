@@ -211,7 +211,7 @@ def upload_file():
                                                 if newsletter_markdown:
                                                         email_html, preview_html = agent_render_newsletter_html(newsletter_markdown)
                                                         newsletter_preview = preview_html
-                                                        recipient = os.getenv("NEWSLETTER_RECIPIENT", "mark@markkhoury.me")
+                                                        recipient = os.getenv("SEND_TO_EMAIL")
                                                         subject = "Your Daily Newsletter"
                                                         if email_html:
                                                                 sent = agent_send_newsletter_email(
