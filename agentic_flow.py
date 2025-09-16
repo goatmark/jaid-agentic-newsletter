@@ -97,14 +97,16 @@ def agent_search_news_tavily(symbol, api_key, max_results=5):
 	import logging
 	logger = logging.getLogger(__name__)
 	url = "https://api.tavily.com/search"
+	headers = {
+		"Authorization": f"Bearer {api_key}"
+	}
 	params = {
 		"query": f"{symbol} stock news",
-		"api_key": api_key,
 		"max_results": max_results
 	}
 	try:
 		logger.info(f"Searching news for symbol: {symbol} with Tavily API...")
-		resp = requests.get(url, params=params)
+		resp = requests.get(url, params=params, headers=headers)
 		logger.info(f"Tavily API response status: {resp.status_code}")
 		logger.info(f"Tavily API response text: {resp.text}")
 		if resp.status_code == 200:
