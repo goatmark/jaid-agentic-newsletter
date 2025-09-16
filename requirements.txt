@@ -1,0 +1,5 @@
+# Requirements for jaid-agentic-newsletter
+openai
+pandas
+python-dotenv
+PyPDF2
