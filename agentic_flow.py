@@ -100,13 +100,13 @@ def agent_search_news_tavily(symbol, api_key, max_results=5):
 	headers = {
 		"Authorization": f"Bearer {api_key}"
 	}
-	params = {
+	json_data = {
 		"query": f"{symbol} stock news",
 		"max_results": max_results
 	}
 	try:
 		logger.info(f"Searching news for symbol: {symbol} with Tavily API...")
-		resp = requests.get(url, params=params, headers=headers)
+		resp = requests.post(url, json=json_data, headers=headers)
 		logger.info(f"Tavily API response status: {resp.status_code}")
 		logger.info(f"Tavily API response text: {resp.text}")
 		if resp.status_code == 200:
@@ -129,22 +129,37 @@ def agent_search_news_tavily(symbol, api_key, max_results=5):
 		return []
 
 def agent_filter_articles(articles: List[NewsArticle]):
-	credible_sources = ["Reuters", "Bloomberg", "WSJ", "CNBC", "Financial Times", "Yahoo Finance"]
-	filtered = [a for a in articles if any(src in a.source for src in credible_sources)]
+	credible_sources = [
+		"Reuters", "Bloomberg", "WSJ", "CNBC", "Financial Times", "Yahoo Finance",
+		"MarketWatch", "Seeking Alpha", "CNN"
+	]
+	exclude_sources = ["Benzinga", "TipRanks", "Forbes"]
+	filtered = [a for a in articles if any(src in a.source for src in credible_sources) and not any(ex in a.source for ex in exclude_sources)]
 	for a in filtered:
 		a.importance = len(a.summary or "")
 	filtered.sort(key=lambda x: x.importance, reverse=True)
 	return filtered[:3]
 
 def agent_build_newsletter(df_sorted, tavily_api_key):
-	top_stocks = agent_get_top_stocks(df_sorted, n=3)
+	portfolio_weight = 0.0
+	selected_stocks = []
+	for _, row in df_sorted.iterrows():
+		selected_stocks.append(Stock(
+			Security=row.get('Security', ''),
+			Symbol=row.get('Symbol', ''),
+			Mkt_Value=row.get('Mkt Value', 0.0),
+			Portfolio_Weight=row.get('% of Total Portfolio', 0.0)
+		))
+		portfolio_weight += row.get('% of Total Portfolio', 0.0)
+		if portfolio_weight >= 80.0:
+			break
 	all_articles = []
-	for stock in top_stocks:
-		articles = agent_search_news_tavily(stock.Symbol, tavily_api_key)
+	for stock in selected_stocks:
+		articles = agent_search_news_tavily(stock.Symbol, tavily_api_key, max_results=10)
 		filtered = agent_filter_articles(articles)
 		all_articles.extend(filtered)
 	all_articles.sort(key=lambda x: x.importance, reverse=True)
-	return Newsletter(top_stocks=top_stocks, articles=all_articles[:3])
+	return Newsletter(top_stocks=selected_stocks, articles=all_articles[:3])
 
 def agent_render_newsletter_html(newsletter: Newsletter):
 	html = "<h2>Your Curated Portfolio Newsletter</h2>"
