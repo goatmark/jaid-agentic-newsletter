@@ -31,8 +31,10 @@ def upload_file():
 	error = None
 	table = None
 	newsletter_html = None
+	import time
 	if request.method == 'POST':
 		logger.info('Received POST request')
+		start_total = time.time()
 		if 'file' not in request.files:
 			error = 'No file part'
 			logger.error(error)
@@ -50,13 +52,22 @@ def upload_file():
 				file.save(filepath)
 				logger.info(f'File saved to {filepath}')
 				print('Extracting PDF text...')
+				start_pdf = time.time()
 				text = agent_extract_pdf_text(filepath)
-				print('PDF text extracted. Length:', len(text))
+				end_pdf = time.time()
+				print(f'PDF text extracted. Length: {len(text)}. Time: {end_pdf - start_pdf:.2f}s')
+				logger.info(f'PDF extraction time: {end_pdf - start_pdf:.2f}s')
 				logger.info('Analyzing PDF text with OpenAI...')
+				start_openai = time.time()
 				analysis = agent_analyze_with_openai(text)
-				print('OpenAI analysis result:', analysis)
+				end_openai = time.time()
+				print(f'OpenAI analysis result: {analysis}. Time: {end_openai - start_openai:.2f}s')
+				logger.info(f'OpenAI analysis time: {end_openai - start_openai:.2f}s')
+				start_df = time.time()
 				df_sorted = agent_build_dataframe(analysis)
-				print('DataFrame built. Columns:', df_sorted.columns.tolist())
+				end_df = time.time()
+				print(f'DataFrame built. Columns: {df_sorted.columns.tolist()}. Time: {end_df - start_df:.2f}s')
+				logger.info(f'DataFrame build time: {end_df - start_df:.2f}s')
 				table = df_sorted.to_html()
 				# Build newsletter preview
 				from dotenv import load_dotenv
@@ -64,12 +75,18 @@ def upload_file():
 				tavily_api_key = os.getenv("TAVILY_API_KEY")
 				if tavily_api_key:
 					print('Building newsletter...')
+					start_news = time.time()
 					newsletter = agent_build_newsletter(df_sorted, tavily_api_key)
-					print('Newsletter object:', newsletter)
+					end_news = time.time()
+					print(f'Newsletter object: {newsletter}. Time: {end_news - start_news:.2f}s')
+					logger.info(f'Newsletter build time: {end_news - start_news:.2f}s')
 					newsletter_html = agent_render_newsletter_html(newsletter)
 				else:
 					newsletter_html = "<p style='color:red;'>TAVILY_API_KEY not configured.</p>"
 					logger.error('TAVILY_API_KEY not configured.')
+		end_total = time.time()
+		print(f'Total execution time: {end_total - start_total:.2f}s')
+		logger.info(f'Total execution time: {end_total - start_total:.2f}s')
 	return render_template_string(HTML_FORM, error=error, table=table, newsletter=newsletter_html)
 
 if __name__ == "__main__":
