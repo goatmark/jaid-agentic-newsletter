@@ -656,42 +656,50 @@ body {{
 
 def agent_send_newsletter_email(subject: str, markdown_content: str, html_content: str, recipient: str) -> bool:
         load_dotenv()
-        api_key = os.getenv("SENDGRID_API_KEY")
+        api_key = os.getenv("BREVO_API_KEY")
         if not api_key:
-                logger.error("SENDGRID_API_KEY not configured; skipping email send.")
+                logger.error("BREVO_API_KEY not configured; skipping email send.")
                 return False
 
-        from_email = os.getenv("SEND_FROM_EMAIL", "mark@markkhoury.me")
+        from_email = os.getenv("SEND_FROM_EMAIL")
+        if not from_email:
+                logger.error("SEND_FROM_EMAIL not configured; skipping email send.")
+                return False
+
+        if not recipient:
+                logger.error("Recipient email not provided; skipping email send.")
+                return False
+
         payload = {
-                "personalizations": [{"to": [{"email": recipient}]}],
-                "from": {"email": from_email},
+                "sender": {"email": from_email},
+                "to": [{"email": recipient}],
                 "subject": subject,
-                "content": [
-                        {"type": "text/plain", "value": markdown_content},
-                        {"type": "text/html", "value": html_content},
-                ],
+                "htmlContent": html_content,
         }
+        if markdown_content:
+                payload["textContent"] = markdown_content
+
         request_data = json.dumps(payload).encode("utf-8")
         req = urllib_request.Request(
-                "https://api.sendgrid.com/v3/mail/send",
+                "https://api.brevo.com/v3/smtp/email",
                 data=request_data,
-                method='POST',
+                method="POST",
                 headers={
-                        "Authorization": f"Bearer {api_key}",
+                        "api-key": api_key,
                         "Content-Type": "application/json",
                 },
         )
         try:
                 with urllib_request.urlopen(req, timeout=10) as response:
                         status = response.status
-                        logger.info("SendGrid response status: %s", status)
+                        logger.info("Brevo response status: %s", status)
                         return 200 <= status < 300
         except urllib_error.HTTPError as http_exc:
                 error_body = http_exc.read().decode('utf-8', errors='ignore')
-                logger.error("SendGrid API error: %s - %s", http_exc.code, error_body)
+                logger.error("Brevo API error: %s - %s", http_exc.code, error_body)
                 return False
         except Exception as exc:
-                logger.error("SendGrid request failed: %s", exc)
+                logger.error("Brevo request failed: %s", exc)
                 return False
 
 

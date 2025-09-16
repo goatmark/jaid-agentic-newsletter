@@ -213,7 +213,9 @@ def upload_file():
                                                         newsletter_preview = preview_html
                                                         recipient = os.getenv("SEND_TO_EMAIL")
                                                         subject = "Your Daily Newsletter"
-                                                        if email_html:
+                                                        if not recipient:
+                                                                email_status = "SEND_TO_EMAIL not configured."
+                                                        elif email_html:
                                                                 sent = agent_send_newsletter_email(
                                                                         subject,
                                                                         newsletter_markdown,
