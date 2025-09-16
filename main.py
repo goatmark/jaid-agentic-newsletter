@@ -47,7 +47,6 @@ def upload_file():
 				df_sorted = build_dataframe(analysis)
 				table = df_sorted.to_html()
 				# Build newsletter preview
-				import os
 				from dotenv import load_dotenv
 				load_dotenv()
 				tavily_api_key = os.getenv("TAVILY_API_KEY")
