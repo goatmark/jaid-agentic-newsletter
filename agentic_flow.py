@@ -134,11 +134,14 @@ def agent_filter_articles(articles: List[NewsArticle]):
 		"MarketWatch", "Seeking Alpha", "CNN"
 	]
 	exclude_sources = ["Benzinga", "TipRanks", "Forbes"]
+	# Loosen filter: if no credible sources, allow any article except excluded sources
 	filtered = [a for a in articles if any(src in a.source for src in credible_sources) and not any(ex in a.source for ex in exclude_sources)]
+	if not filtered:
+		filtered = [a for a in articles if not any(ex in a.source for ex in exclude_sources)]
 	for a in filtered:
 		a.importance = len(a.summary or "")
 	filtered.sort(key=lambda x: x.importance, reverse=True)
-	return filtered[:3]
+	return filtered[:3] if filtered else articles[:3]
 
 def agent_build_newsletter(df_sorted, tavily_api_key):
 	portfolio_weight = 0.0
@@ -157,9 +160,13 @@ def agent_build_newsletter(df_sorted, tavily_api_key):
 	for stock in selected_stocks:
 		articles = agent_search_news_tavily(stock.Symbol, tavily_api_key, max_results=10)
 		filtered = agent_filter_articles(articles)
-		all_articles.extend(filtered)
+		if filtered:
+			all_articles.extend(filtered)
+		else:
+			all_articles.extend(articles[:3])
 	all_articles.sort(key=lambda x: x.importance, reverse=True)
-	return Newsletter(top_stocks=selected_stocks, articles=all_articles[:3])
+	# Always return at least 3 articles if available
+	return Newsletter(top_stocks=selected_stocks, articles=all_articles[:3] if all_articles else [])
 
 def agent_render_newsletter_html(newsletter: Newsletter):
 	html = "<h2>Your Curated Portfolio Newsletter</h2>"
