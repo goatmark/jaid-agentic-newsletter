@@ -34,7 +34,14 @@ def analyze_with_openai(text):
 	load_dotenv()
 	api_key = os.getenv("OPENAI_API_KEY")
 	client = openai.OpenAI(api_key=api_key)
-	prompt = f"Analyze the following PDF content and return a JSON object summarizing its main points, topics, and any key data: {text[:4000]}"
+	prompt = (
+		"Extract only the account balances from the following portfolio statement PDF text. "
+		"Ignore trading activity and overall account balance. "
+		"Return a JSON array where each object represents a security with these keys: "
+		"'Security' (e.g. Apple), 'Symbol' (e.g. AAPL), 'Mkt Value', and '% of Total Portfolio'. "
+		"Do not include any other information. "
+		f"Here is the PDF text: {text[:40000]}"
+	)
 	response = client.chat.completions.create(
 		model="gpt-3.5-turbo",
 		messages=[{"role": "user", "content": prompt}],
@@ -43,6 +50,16 @@ def analyze_with_openai(text):
 	)
 	import json
 	content = response.choices[0].message.content
+	# Robustly extract JSON from code block if present
+	if content.strip().startswith('```'):
+		# Remove triple backticks and optional 'json' label
+		content = content.strip()
+		content = content.lstrip('`')
+		if content.lower().startswith('json'):
+			content = content[4:].strip()
+		# Remove trailing backticks
+		if content.endswith('```'):
+			content = content[:-3].strip()
 	try:
 		result_json = json.loads(content)
 	except Exception:
@@ -79,8 +96,24 @@ def upload_file():
 				file.save(filepath)
 				text = extract_pdf_text(filepath)
 				analysis = analyze_with_openai(text)
-				df = pd.DataFrame([analysis])
-				table = df.to_html()
+				# Expecting analysis to be a list of dicts
+				if isinstance(analysis, dict) and 'raw' in analysis:
+					df = pd.DataFrame([analysis])
+				else:
+					df = pd.DataFrame(analysis)
+				# Try to sort by 'Mkt Value' descending
+				try:
+					df_sorted = df.copy()
+					# Remove any non-numeric characters and convert to float for sorting
+					df_sorted['Mkt Value'] = df_sorted['Mkt Value'].replace('[^0-9.]', '', regex=True).astype(float)
+					df_sorted = df_sorted.sort_values(by='Mkt Value', ascending=False)
+					# Convert '% of Total Portfolio' to float
+					df_sorted['% of Total Portfolio'] = df_sorted['% of Total Portfolio'].replace('[^0-9.]', '', regex=True).astype(float)
+					df_sorted['Cumulative Portfolio Weight'] = df_sorted['% of Total Portfolio'].cumsum()
+				except Exception:
+					df_sorted = df
+				print(df_sorted)
+				table = df_sorted.to_html()
 	return render_template_string(HTML_FORM, error=error, table=table)
 
 if __name__ == "__main__":
