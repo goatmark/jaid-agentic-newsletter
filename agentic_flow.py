@@ -96,12 +96,18 @@ def agent_get_top_stocks(df, n=3):
 def agent_search_news_tavily(symbol, api_key, max_results=5):
 	import logging
 	logger = logging.getLogger(__name__)
+	from datetime import datetime, timedelta
 	url = "https://api.tavily.com/search"
 	headers = {
 		"Authorization": f"Bearer {api_key}"
 	}
+	# Only get news from last 3 days
+	today = datetime.utcnow().date()
+	three_days_ago = today - timedelta(days=3)
+	# Tavily supports natural language queries, so add date filter
+	query = f"{symbol} news after:{three_days_ago}"
 	json_data = {
-		"query": f"{symbol} stock news",
+		"query": query,
 		"max_results": max_results
 	}
 	try:
@@ -113,13 +119,22 @@ def agent_search_news_tavily(symbol, api_key, max_results=5):
 			data = resp.json()
 			articles = []
 			for item in data.get('results', []):
+				# Only include articles published in last 3 days
+				pub_date = item.get('published_date')
+				if pub_date:
+					try:
+						pub_dt = datetime.strptime(pub_date[:10], "%Y-%m-%d").date()
+						if pub_dt < three_days_ago:
+							continue
+					except Exception:
+						pass
 				articles.append(NewsArticle(
 					title=item.get('title', ''),
 					url=item.get('url', ''),
 					source=item.get('source', ''),
 					summary=item.get('description', '')
 				))
-			logger.info(f"Found {len(articles)} articles for {symbol}")
+			logger.info(f"Found {len(articles)} recent articles for {symbol}")
 			return articles
 		else:
 			logger.error(f"Tavily API error: {resp.status_code} {resp.text}")
@@ -134,12 +149,30 @@ def agent_filter_articles(articles: List[NewsArticle]):
 		"MarketWatch", "Seeking Alpha", "CNN"
 	]
 	exclude_sources = ["Benzinga", "TipRanks", "Forbes"]
-	# Loosen filter: if no credible sources, allow any article except excluded sources
 	filtered = [a for a in articles if any(src in a.source for src in credible_sources) and not any(ex in a.source for ex in exclude_sources)]
 	if not filtered:
 		filtered = [a for a in articles if not any(ex in a.source for ex in exclude_sources)]
-	for a in filtered:
-		a.importance = len(a.summary or "")
+	# Summarize and score impact using OpenAI
+	load_dotenv()
+	openai_api_key = os.getenv("OPENAI_API_KEY")
+	if openai_api_key and filtered:
+		try:
+			client = openai.OpenAI(api_key=openai_api_key)
+			for a in filtered:
+				prompt = f"Summarize this news article for a daily investor newsletter. Estimate its impact on the stock price and portfolio.\nTitle: {a.title}\nSource: {a.source}\nSummary: {a.summary}"
+				response = client.chat.completions.create(
+					model="gpt-3.5-turbo",
+					messages=[{"role": "user", "content": prompt}],
+					max_tokens=256,
+					temperature=0.3
+				)
+				summary = response.choices[0].message.content.strip()
+				a.summary = summary
+				# Score impact: crude proxy, count impactful words
+				impact_keywords = ["upgrade", "downgrade", "earnings", "acquisition", "merger", "guidance", "forecast", "record", "lawsuit", "SEC", "investigation", "profit", "loss", "growth", "drop", "surge", "buyback", "dividend"]
+				a.importance = sum([summary.lower().count(k) for k in impact_keywords]) + len(a.summary or "")
+		except Exception as e:
+			pass
 	filtered.sort(key=lambda x: x.importance, reverse=True)
 	return filtered[:3] if filtered else articles[:3]
 
@@ -160,6 +193,9 @@ def agent_build_newsletter(df_sorted, tavily_api_key):
 	for stock in selected_stocks:
 		articles = agent_search_news_tavily(stock.Symbol, tavily_api_key, max_results=10)
 		filtered = agent_filter_articles(articles)
+		# Weight by portfolio
+		for a in filtered:
+			a.importance += stock.Portfolio_Weight
 		if filtered:
 			all_articles.extend(filtered)
 		else:
@@ -173,9 +209,9 @@ def agent_render_newsletter_html(newsletter: Newsletter):
 	html += "<h3>Top Stocks</h3><ul>"
 	for stock in newsletter.top_stocks:
 		html += f"<li>{stock.Security} ({stock.Symbol}): {stock.Portfolio_Weight:.2f}% of portfolio</li>"
-	html += "</ul><h3>Top News</h3><ol>"
+	html += "</ul><h3>Top News (last 3 days)</h3><ol>"
 	for article in newsletter.articles:
-		html += f"<li><a href='{article.url}' target='_blank'>{article.title}</a> <br><em>{article.source}</em><br>{article.summary}</li>"
+		html += f"<li><a href='{article.url}' target='_blank'>{article.title}</a> <br><em>{article.source}</em><br><strong>Summary:</strong> {article.summary}</li>"
 	html += "</ol>"
 	return html
 
