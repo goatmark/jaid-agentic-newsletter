@@ -1,9 +1,12 @@
 
 
 from flask import Flask, request, render_template_string
-from agentic_flow import extract_pdf_text, analyze_with_openai, build_dataframe, build_newsletter, render_newsletter_html
+from agentic_flow import agent_extract_pdf_text, agent_analyze_with_openai, agent_build_dataframe, agent_build_newsletter, agent_render_newsletter_html
+import logging
 
 app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 UPLOAD_FOLDER = 'uploads'
@@ -31,30 +34,44 @@ def upload_file():
 	table = None
 	newsletter_html = None
 	if request.method == 'POST':
+		logger.info('Received POST request')
 		if 'file' not in request.files:
 			error = 'No file part'
+			logger.error(error)
 		else:
 			file = request.files['file']
+			logger.info(f'File received: {file.filename}')
 			if file.filename == '':
 				error = 'No selected file'
+				logger.error(error)
 			elif not file.filename.lower().endswith('.pdf'):
 				error = 'File must be a PDF'
+				logger.error(error)
 			else:
 				filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
 				file.save(filepath)
-				text = extract_pdf_text(filepath)
-				analysis = analyze_with_openai(text)
-				df_sorted = build_dataframe(analysis)
+				logger.info(f'File saved to {filepath}')
+				print('Extracting PDF text...')
+				text = agent_extract_pdf_text(filepath)
+				print('PDF text extracted. Length:', len(text))
+				logger.info('Analyzing PDF text with OpenAI...')
+				analysis = agent_analyze_with_openai(text)
+				print('OpenAI analysis result:', analysis)
+				df_sorted = agent_build_dataframe(analysis)
+				print('DataFrame built. Columns:', df_sorted.columns.tolist())
 				table = df_sorted.to_html()
 				# Build newsletter preview
 				from dotenv import load_dotenv
 				load_dotenv()
 				tavily_api_key = os.getenv("TAVILY_API_KEY")
 				if tavily_api_key:
-					newsletter = build_newsletter(df_sorted, tavily_api_key)
-					newsletter_html = render_newsletter_html(newsletter)
+					print('Building newsletter...')
+					newsletter = agent_build_newsletter(df_sorted, tavily_api_key)
+					print('Newsletter object:', newsletter)
+					newsletter_html = agent_render_newsletter_html(newsletter)
 				else:
 					newsletter_html = "<p style='color:red;'>TAVILY_API_KEY not configured.</p>"
+					logger.error('TAVILY_API_KEY not configured.')
 	return render_template_string(HTML_FORM, error=error, table=table, newsletter=newsletter_html)
 
 if __name__ == "__main__":
