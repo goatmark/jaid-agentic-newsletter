@@ -2,6 +2,7 @@ import html
 import json
 import logging
 import os
+import random
 import re
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
@@ -24,6 +25,22 @@ class Stock(BaseModel):
         Price: Optional[float] = None
         Change_1m: Optional[float] = None
         Change_1y: Optional[float] = None
+
+
+LOW_SIGNAL_PATTERNS = [
+        "gearing up",
+        "set to report",
+        "set to release",
+        "prepares to",
+        "preparing to",
+        "poised to",
+        "ahead of earnings",
+        "earnings preview",
+        "price target",
+        "market volatility",
+        "analysts expect",
+        "eyes on",
+]
 
 
 class NewsArticle(BaseModel):
@@ -304,10 +321,16 @@ def agent_filter_articles(articles: List[NewsArticle], stock: Stock) -> List[New
                 except Exception as exc:
                         logger.warning("Unable to summarize articles with OpenAI: %s", exc)
 
+        filtered_signal = [a for a in filtered if not _is_low_signal_article(a)]
+        if filtered_signal:
+                filtered = filtered_signal
+
         for article in filtered:
                 article.related_symbol = article.related_symbol or stock.Symbol
                 if not article.importance:
                         article.importance = len(article.summary or "") + (stock.Portfolio_Weight or 0.0)
+                if article.source and any(src in article.source for src in credible_sources):
+                        article.importance += 15
         filtered.sort(key=lambda a: a.importance, reverse=True)
         return filtered[:3]
 # ---------------------------------------------------------------------------
@@ -329,7 +352,18 @@ def agent_build_newsletter(df_sorted: pd.DataFrame, tavily_api_key: Optional[str
                 logger.warning("TAVILY_API_KEY not provided; skipping live news search.")
 
         all_articles.sort(key=lambda a: a.importance, reverse=True)
-        newsletter = Newsletter(top_stocks=top_stocks, articles=all_articles[:5])
+
+        deduped: dict[str, NewsArticle] = {}
+        for article in all_articles:
+                key = article.related_symbol or article.title
+                existing = deduped.get(key)
+                if not existing or article.importance > existing.importance:
+                        deduped[key] = article
+
+        unique_articles = list(deduped.values())
+        unique_articles.sort(key=lambda a: a.importance, reverse=True)
+
+        newsletter = Newsletter(top_stocks=top_stocks, articles=unique_articles[:3])
         markdown_content = agent_generate_markdown(newsletter)
         return newsletter, markdown_content
 
@@ -370,18 +404,20 @@ def agent_generate_markdown(newsletter: Newsletter) -> str:
 
         client = openai.OpenAI(api_key=openai_api_key)
         system_prompt = (
-                "You are an upbeat market analyst writing a breezy but insightful investor newsletter. "
-                "Write in the style of Anand Sanwal's CB Insights and Emma Tucker's WSJ 10 Point: smart, "
-                "punchy, and conversational. Always respond with valid Markdown only."
+                "You are a disciplined financial editor who writes sharp, high-signal investor newsletters. "
+                "Write in the spirit of Emma Tucker's WSJ 10-Point: concise, confident, and direct. "
+                "Always respond with valid Markdown only."
         )
         user_prompt = (
-                "Craft today's portfolio newsletter. Include:"
-                "\n- A sharp intro paragraph with a hook."
-                "\n- A TL;DR section with 3-5 punchy bullets summarizing the biggest moves."
-                "\n- A table titled 'Market Moves' with columns Stock, Price (USD), 1M %, 1Y %, Portfolio Weight %."
-                "\n- A 'Headlines' section that walks through each article with descriptive subheads and inline links."
-                "\n- A closing takeaway or action item."
-                "\nKeep paragraphs short (max 3 sentences), avoid jargon, and make it fun to read."
+                "Craft today's portfolio newsletter for a single reader. Requirements:"
+                "\n- Open with a direct greeting to the reader (for example, 'Hi there,')."
+                "\n- Keep the tone professional and clear—no emojis, hype, or filler."
+                "\n- Provide a TL;DR section with exactly three bullets that capture concrete developments from the most material headlines."
+                "\n- Add a table titled 'Market Moves' with columns Stock, Price (USD), 1M %, 1Y %, Portfolio Weight %."
+                "\n- In 'Headlines', cover at most three stories. Use descriptive subheads with inline Markdown links, focus on consequential announcements or disclosures, and avoid speculative previews."
+                "\n- Close with a section titled 'Affirmation' containing one concise, sincere compliment or affirmation addressed to the reader."
+                "\n- Refer to the reader as 'you'; do not address 'investors', 'folks', or a crowd."
+                "\n- Keep every paragraph to three sentences or fewer."
                 "\nUse the following structured data as your source of truth:\n"
                 f"{json.dumps(payload, indent=2)}"
         )
@@ -408,13 +444,56 @@ def _build_fallback_markdown(payload: dict) -> str:
         date_str = payload.get("generated_on", datetime.utcnow().strftime("%B %d, %Y"))
         stocks = payload.get("stocks", [])
         articles = payload.get("articles", [])
-        lines = [f"# Portfolio Pulse — {date_str}"]
-        if stocks:
-                lines.append("\n## TL;DR")
-                for stock in stocks[:4]:
+
+        lines = [f"# Portfolio Pulse — {date_str}", "", "Hi there,", "", "Here's the latest check-in on your core positions."]
+
+        lines.append("\n## TL;DR")
+        if articles:
+                for article in articles[:3]:
+                        summary = (article.get("summary") or "").strip()
+                        if summary:
+                                lines.append(f"- {summary}")
+                        else:
+                                lines.append(f"- {article.get('title', 'Headline update')} ({article.get('related_symbol', '')})")
+        else:
+                top_weight = None
+                heaviest_weight: Optional[float] = None
+                for stock in stocks:
+                        try:
+                                weight = float(stock.get("portfolio_weight", 0.0))
+                        except (TypeError, ValueError):
+                                continue
+                        if heaviest_weight is None or weight > heaviest_weight:
+                                heaviest_weight = weight
+                                top_weight = stock
+                best_1m = _select_extreme_change(stocks, key="change_1m", find_max=True)
+                worst_1m = _select_extreme_change(stocks, key="change_1m", find_max=False)
+                if top_weight:
                         lines.append(
-                                f"- {stock.get('name')} ({stock.get('symbol')}): {float(stock.get('portfolio_weight', 0.0)):.2f}% of the portfolio."
+                                "- {name} ({symbol}) remains your heaviest weight at {weight:.2f}% of assets.".format(
+                                        name=top_weight.get("name", ""),
+                                        symbol=top_weight.get("symbol", ""),
+                                        weight=float(top_weight.get("portfolio_weight", 0.0)),
+                                )
                         )
+                if best_1m:
+                        lines.append(
+                                "- {name} ({symbol}) leads the one-month board at {change:.2f}%".format(
+                                        name=best_1m.get("name", ""),
+                                        symbol=best_1m.get("symbol", ""),
+                                        change=float(best_1m.get("change_1m", 0.0)),
+                                )
+                        )
+                if worst_1m:
+                        lines.append(
+                                "- {name} ({symbol}) trails on the month at {change:.2f}%".format(
+                                        name=worst_1m.get("name", ""),
+                                        symbol=worst_1m.get("symbol", ""),
+                                        change=float(worst_1m.get("change_1m", 0.0)),
+                                )
+                        )
+
+        if stocks:
                 lines.append("\n## Market Moves")
                 lines.append("| Stock | Price (USD) | 1M % | 1Y % | Portfolio Weight % |")
                 lines.append("| --- | ---: | ---: | ---: | ---: |")
@@ -429,6 +508,7 @@ def _build_fallback_markdown(payload: dict) -> str:
                                         weight=float(stock.get("portfolio_weight", 0.0)),
                                 )
                         )
+
         if articles:
                 lines.append("\n## Headlines")
                 for article in articles:
@@ -445,9 +525,55 @@ def _build_fallback_markdown(payload: dict) -> str:
                                 lines.append(f"*Source: {source}*")
                         if summary:
                                 lines.append(summary)
-        lines.append("\n## What to Watch")
-        lines.append("Stay close to the tape and keep an eye on how earnings guidance shapes the next leg of performance.")
+
+        lines.append("\n## Affirmation")
+        lines.append(random.choice([
+                "You've got the discipline most managers wish they could buy off the shelf.",
+                "Your steady read on the tape keeps this portfolio in strong hands.",
+                "Your attention to the fundamentals is a competitive edge.",
+                "You're making sharper calls than half the street today.",
+        ]))
         return "\n".join(lines)
+
+
+def _select_extreme_change(stocks: List[dict], key: str, find_max: bool) -> Optional[dict]:
+        comparator_value: Optional[float] = None
+        selected: Optional[dict] = None
+        for stock in stocks:
+                value = stock.get(key)
+                try:
+                        numeric = float(value)
+                except (TypeError, ValueError):
+                        continue
+                if comparator_value is None:
+                        comparator_value = numeric
+                        selected = stock
+                        continue
+                if find_max and numeric > comparator_value:
+                        comparator_value = numeric
+                        selected = stock
+                elif not find_max and numeric < comparator_value:
+                        comparator_value = numeric
+                        selected = stock
+        if selected is None:
+                        return None
+        result = dict(selected)
+        if comparator_value is not None:
+                result[key] = comparator_value
+        return result
+
+
+def _is_low_signal_article(article: NewsArticle) -> bool:
+        haystacks = []
+        if getattr(article, "title", None):
+                haystacks.append(article.title.lower())
+        if getattr(article, "summary", None):
+                haystacks.append(article.summary.lower())
+        for pattern in LOW_SIGNAL_PATTERNS:
+                for hay in haystacks:
+                        if pattern in hay:
+                                return True
+        return False
 # ---------------------------------------------------------------------------
 # Rendering helpers
 # ---------------------------------------------------------------------------
