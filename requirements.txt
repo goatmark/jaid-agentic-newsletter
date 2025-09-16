@@ -3,3 +3,4 @@ openai
 pandas
 python-dotenv
 PyPDF2
+Flask
